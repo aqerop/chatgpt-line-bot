@@ -54,11 +54,24 @@ async def callback(request: Request) -> str:
             try:
                 reply_token = event.reply_token
                 user_message = event.message.text
-                # 테스트용 에코 응답
+                
+                # 메모리에 사용자 메시지 저장
+                memory.append(event.source.user_id, 'user', user_message)
+                
+                # zhipuai를 사용하여 응답 생성
+                response = chat_completion(
+                    event.source.user_id,
+                    memory,
+                    method='zhipuai',
+                    api_key=config.GPT_API_KEY
+                )
+                
+                # 응답 전송
                 line_bot_api.reply_message(
                     reply_token,
-                    TextSendMessage(text=f"따라하기: {user_message}")
+                    TextSendMessage(text=response)
                 )
+                
             except Exception as e:
                 print("Error in handle_message:", str(e))
                 
