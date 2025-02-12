@@ -1,7 +1,9 @@
 import requests
 from icrawler import ImageDownloader
 from icrawler.builtin import GoogleImageCrawler
-from serpapi import GoogleSearch
+from pathlib import Path
+import random
+from serpapi import search  # GoogleSearch 대신 search 사용
 
 
 class CustomLinkPrinter(ImageDownloader):
@@ -37,16 +39,54 @@ class CustomLinkPrinter(ImageDownloader):
 
 class ImageCrawler:
     """Crawl the Image"""
-    def __init__(
-        self,
-        engine: str = 'icrawler',
-        nums: int = 1,
-        api_key: str = None
-    ) -> None:
-        self.image_save_path = ("./")
+    def __init__(self, engine: str = 'icrawler', nums: int = 1, api_key: str = None) -> None:
         self.engine = engine
         self.nums = nums
         self.api_key = api_key
+
+    def get_url(self, query: str) -> str:
+        """Get image url from different sources"""
+        if self.engine == 'icrawler':
+            return self._icrawler_search(query)
+        elif self.engine == 'serpapi':
+            return self._serpapi_search(query)
+        return None
+
+    def _icrawler_search(self, query: str) -> str:
+        """Use icrawler to get images"""
+        import tempfile
+        import os
+        
+        # 임시 디렉토리 생성
+        with tempfile.TemporaryDirectory() as temp_dir:
+            crawler = GoogleImageCrawler(storage={'root_dir': temp_dir})
+            crawler.crawl(keyword=query, max_num=1)
+            
+            # 다운로드된 첫 번째 이미지 찾기
+            for filename in os.listdir(temp_dir):
+                if filename.endswith(('.jpg', '.png', '.jpeg')):
+                    return os.path.join(temp_dir, filename)
+        return None
+        
+    def _serpapi_search(self, query: str) -> str:
+        """Use SerpAPI to get images"""
+        if not self.api_key:
+            return None
+            
+        params = {
+            "engine": "google",
+            "q": query,
+            "tbm": "isch",
+            "num": self.nums,
+            "api_key": self.api_key
+        }
+        
+        results = search(params)
+        
+        if 'images_results' in results and results['images_results']:
+            return results['images_results'][0]['original']
+            
+        return None
 
     def _is_img_url(self, url) -> bool:
         """Check the image url is valid or invalid"""
@@ -58,25 +98,6 @@ class ImageCrawler:
             return False
         except Exception as e:
             return False
-
-    def _serpapi(self, search_query: str) -> list[str]:
-        """Serpapi for google search images"""
-        params = {
-            "engine": "google",
-            "q": search_query,
-            "tbm": "isch",
-            "api_key": self.api_key
-        }
-
-        search = GoogleSearch(params)
-        results = search.get_dict()
-        images = results['images_results']
-
-        urls = []
-        for image in images[:self.nums]:
-            urls.append(image['original'])
-
-        return urls
 
     def _icrawler(self, search_query: str, prefix_name: str = 'tmp') -> list[str]:
         """Icrawler for google search images (Free)"""
@@ -100,17 +121,3 @@ class ImageCrawler:
         print(f'Get image urls: {img_urls}')
 
         return img_urls[:self.nums]
-
-    def get_url(self, search_query: str) -> str:
-        try:
-            if self.engine == 'icrawler':
-                urls = self._icrawler(search_query)
-            elif self.engine == 'serpapi':
-                urls = self._serpapi(search_query)
-
-            for url in urls:
-                if self._is_img_url(url):
-                    return url
-
-        except Exception as e:
-            print(f'\033[31m{e}')

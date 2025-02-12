@@ -97,11 +97,19 @@ def is_url(string: str) -> bool:
 
 def agent(query: str) -> tuple[str]:
     """Auto use correct tool by user query."""
+    # 이미지 검색 키워드가 포함된 경우
+    if any(keyword in query for keyword in image_keywords):
+        # 검색어에서 이미지 관련 키워드 제거
+        search_query = query
+        for keyword in image_keywords:
+            search_query = search_query.replace(keyword, "").strip()
+        return "search_image_url", search_query
+    
+    # 기본 에이전트 로직
     prompt = agent_template + query
     message = [{'role': 'user', 'content': prompt}]
-
     tool, input = chat(message, config.GPT_METHOD, config.GPT_API_KEY).split(', ')
-
+    
     print(f"""
     Agent
     =========================================
@@ -109,19 +117,33 @@ def agent(query: str) -> tuple[str]:
     Tool: {tool}
     Input: {input}
     """)
-
+    
     return tool, input
 
 
 def search_image_url(query: str) -> str:
-    """Fetches image URL from different search sources."""
-    img_crawler = ImageCrawler(nums=5)
-    img_url = img_crawler.get_url(query)
-    if not img_url:
-        img_serp = ImageCrawler(engine='serpapi', nums=5, api_key=config.SERPAPI_API_KEY)
-        img_url = img_serp.get_url(query)
-        print('Used Serpapi search image instead of icrawler.')
-    return img_url
+    """이미지 URL을 다양한 검색 소스에서 가져옵니다."""
+    try:
+        # 먼저 icrawler 시도
+        img_crawler = ImageCrawler(nums=1)
+        img_url = img_crawler.get_url(query)
+        
+        # icrawler 실패시 serpapi 시도
+        if not img_url and config.SERPAPI_API_KEY:
+            img_serp = ImageCrawler(
+                engine='serpapi',
+                nums=1,
+                api_key=config.SERPAPI_API_KEY
+            )
+            img_url = img_serp.get_url(query)
+            if img_url:
+                print('Used SerpAPI for image search')
+                
+        return img_url
+        
+    except Exception as e:
+        print(f"Image search error: {e}")
+        return None
 
 
 def send_image_reply(reply_token, img_url: str) -> None:
@@ -142,89 +164,86 @@ def send_text_reply(reply_token, text: str) -> None:
 
 @handler.add(MessageEvent, message=(TextMessage))
 def handle_message(event) -> None:
-    """Event - User sent message
-
-    Args:
-        event (LINE Event Object)
-
-    Refs:
-        https://developers.line.biz/en/reference/messaging-api/#message-event
-        https://www.21cs.tw/Nurse/showLiangArticle.xhtml?liangArticleId=503
-    """
     if not isinstance(event.message, TextMessage):
         return
 
     reply_token = event.reply_token
     user_message = event.message.text
-
     source_type = event.source.type
     source_id = getattr(event.source, f"{source_type}_id", None)
 
+    # 개인 채팅 vs 그룹 채팅 처리
     if source_type == 'user':
         user_name = line_bot_api.get_profile(source_id).display_name
         print(f'{user_name}: {user_message}')
-
     else:
         if not user_message.startswith('@chat'):
             return
-        else:
-            user_message = user_message.replace('@chat', '')
-
-    tool, input_query = agent(user_message)
-
-    if tool in ['chat_completion']:
-        input_query = f"{girlfriend}:\n {input_query}"
-        memory.append(source_id, 'user', f"{girlfriend}:\n {user_message}")
+        user_message = user_message.replace('@chat', '').strip()
 
     try:
-        if tool in ['chat_completion']:
+        # 에이전트를 통해 적절한 도구 선택
+        tool, input_query = agent(user_message)
+        
+        # 채팅 완성 처리
+        if tool == 'chat_completion':
+            memory.append(source_id, 'user', user_message)
             response = chat_completion(source_id, memory, config.GPT_METHOD, config.GPT_API_KEY)
+        
+        # 이미지 검색 처리
+        elif tool == 'search_image_url':
+            response = search_image_url(input_query)
+            
+        # 기타 도구 처리
         else:
             response = eval(f"{tool}('{input_query}')")
 
-        if is_url(response):
-            send_image_reply(reply_token, response)
+        # 응답 전송
+        if response:
+            if is_url(response):
+                send_image_reply(reply_token, response)
+            else:
+                send_text_reply(reply_token, response)
         else:
-            send_text_reply(reply_token, response)
+            send_text_reply(reply_token, "죄송합니다. 요청을 처리할 수 없습니다.")
 
     except Exception as e:
-        send_text_reply(reply_token, e)
+        print(f"Error in handle_message: {e}")
+        send_text_reply(reply_token, f"오류가 발생했습니다: {str(e)}")
 
 
 @line_app.get("/recommend")
 def recommend_from_yt() -> dict:
-    """Line Bot Broadcast
-
-    Descriptions
-    ------------
-    Recommend youtube videos to all followed users.
-    (Use cron-job.org to call this api)
-
-    References
-    ----------
-    https://www.cnblogs.com/pungchur/p/14385539.html
-    https://steam.oxxostudio.tw/category/python/example/line-push-message.html
-    """
-    videos = recommend_videos()
-
-    if videos and "There're something wrong in openai api when call, please try again." not in videos:
-        line_bot_api.broadcast(TextSendMessage(text=videos))
-
-        # Push message to group via known group (event.source.group_id)
-        known_group_ids = [
-            'C6d-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-            'Ccc-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-            'Cbb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-        ]
-        for group_id in known_group_ids:
-            line_bot_api.push_message(group_id, TextSendMessage(text=videos))
-
-        print('Successfully recommended videos')
-        return {"status": "success", "message": "recommended videos."}
-
-    else:
-        print('Failed recommended videos')
-        return {"status": "failed", "message": "no get recommended videos."}
+    try:
+        videos = recommend_videos()
+        
+        if videos and "오류가 발생했습니다" not in videos:
+            # 모든 사용자에게 브로드캐스트
+            line_bot_api.broadcast(TextSendMessage(text=videos))
+            
+            # 알려진 그룹에 메시지 푸시
+            known_group_ids = [
+                'C6d-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+                'Ccc-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+                'Cbb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            ]
+            
+            for group_id in known_group_ids:
+                try:
+                    line_bot_api.push_message(group_id, TextSendMessage(text=videos))
+                except Exception as e:
+                    print(f"그룹 {group_id}에 메시지 전송 실패: {e}")
+            
+            print('YouTube 추천 성공')
+            return {"status": "success", "message": "동영상이 추천되었습니다."}
+            
+        else:
+            print('YouTube 추천 실패')
+            return {"status": "failed", "message": "추천할 동영상을 가져올 수 없습니다."}
+            
+    except Exception as e:
+        print(f"YouTube 추천 오류: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @line_app.get('/cwsChannel')

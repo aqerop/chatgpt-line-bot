@@ -7,6 +7,10 @@ from fastapi.templating import Jinja2Templates
 
 from chatgpt_linebot.urls import line_app
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 app = FastAPI()
 
 templates = Jinja2Templates(directory="templates")

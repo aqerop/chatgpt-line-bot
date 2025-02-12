@@ -34,14 +34,27 @@ cws_channel_template = """
 """
 
 agent_template = """
-The available tools are:
-- g4f_generate_image: Generates images from text using G4F AI. Input is <user query>, and it returns only one URL.
-- rapidapis.ai_text_to_img: Generates images from text using RapidAPI's AI. Input is <user query>, and it returns only one URL.
-- search_image_url: Crawls the web to fetch images. Input is <desired image>, and it returns only one URL.
-- horoscope.get_horoscope_response: Retrieves the weekly horoscope for a specific zodiac sign. Input is <zodiac sign>, and it returns a text response.
-- chat_completion: Handles general conversation content. Input is <user query>, and it returns a text response.
-Based on the user's query, determine which tool should be used and return the function name of that tool along with its input.
-return format (use , split): function name, input
+다음 도구들 중 하나를 선택하여 사용자의 요청을 처리하세요:
 
-user query: 
+1. chat_completion: 일반적인 대화나 질문에 답변
+2. search_image_url: 이미지 검색 및 URL 반환
+3. horoscope: 운세 정보 제공
+
+입력: {query}
+
+다음 형식으로 응답하세요:
+도구이름, 입력값
+
+예시:
+- chat_completion, 안녕하세요
+- search_image_url, cute cat
+- horoscope, 양자리
+
+응답:
 """
+
+# 이미지 검색 키워드 인식을 위한 예시 추가
+image_keywords = [
+    "사진", "이미지", "image", "picture", "photo",
+    "보여줘", "찾아줘", "검색해줘", "가져와"
+]
