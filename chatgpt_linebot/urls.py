@@ -72,6 +72,14 @@ image_analysis_keywords = [
     "this", "what", "explain", "analyze", "tell me"
 ]
 
+# 웹페이지 캡처 요청 키워드
+webpage_capture_keywords = [
+    # 한국어 키워드
+    "캡처", "스크린샷", "화면", "링크",
+    # 영어 키워드
+    "capture", "screenshot", "screen"
+]
+
 @line_app.post("/callback")
 async def callback(request: Request) -> str:
     """LINE Bot webhook callback"""
@@ -115,18 +123,46 @@ async def callback(request: Request) -> str:
                 
                 print(f"메시지 수신: {user_message}")
                 
-                # 이전 검색어와 이미지 URL 저장을 위한 전역 변수
-                if not hasattr(handle_message, 'last_search_query'):
-                    handle_message.last_search_query = {}
-                if not hasattr(handle_message, 'last_image_urls'):
-                    handle_message.last_image_urls = {}
+                # 이전 메시지와 URL 저장을 위한 전역 변수
+                if not hasattr(handle_message, 'last_messages'):
+                    handle_message.last_messages = {}
+                if not hasattr(handle_message, 'last_urls'):
+                    handle_message.last_urls = {}
+                
+                # 웹페이지 캡처 요청 체크
+                if any(keyword in user_message.lower() for keyword in webpage_capture_keywords):
+                    # 인용된 메시지에서 URL 찾기
+                    if hasattr(event.message, 'quote_token'):
+                        quote_token = event.message.quote_token
+                        if source_id in handle_message.last_messages and quote_token in handle_message.last_messages[source_id]:
+                            prev_message = handle_message.last_messages[source_id][quote_token]
+                            # URL 추출
+                            import re
+                            urls = re.findall(r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*', prev_message)
+                            if urls:
+                                url = urls[0]
+                                # URL 저장
+                                if source_id not in handle_message.last_urls:
+                                    handle_message.last_urls[source_id] = {}
+                                handle_message.last_urls[source_id][quote_token] = url
+                                
+                                # 웹페이지 캡처
+                                screenshot_path = capture_webpage(url)
+                                if screenshot_path:
+                                    # 이미지 전송
+                                    image_message = ImageSendMessage(
+                                        original_content_url=f"https://your-domain.com/{screenshot_path}",
+                                        preview_image_url=f"https://your-domain.com/{screenshot_path}"
+                                    )
+                                    line_bot_api.reply_message(reply_token, messages=image_message)
+                                    return
                 
                 # 이미지 분석 요청 체크 (인용된 메시지가 있는 경우)
                 if hasattr(event.message, 'quote_token') and any(keyword in user_message.lower() for keyword in image_analysis_keywords):
                     quote_token = event.message.quote_token
-                    if source_id in handle_message.last_image_urls and quote_token in handle_message.last_image_urls[source_id]:
-                        img_url = handle_message.last_image_urls[source_id][quote_token]
-                        search_query = handle_message.last_search_query[source_id]
+                    if source_id in handle_message.last_messages and quote_token in handle_message.last_messages[source_id]:
+                        img_url = handle_message.last_messages[source_id][quote_token]
+                        search_query = handle_message.last_messages[source_id]['user']
                         
                         # 이미지 분석 응답 생성
                         analysis = f"이 이미지는 '{search_query}'에 대한 검색 결과입니다.\n\n"
@@ -161,7 +197,7 @@ async def callback(request: Request) -> str:
                         search_query = search_query.replace(keyword, "").strip()
                     
                     # 검색어 저장
-                    handle_message.last_search_query[source_id] = search_query
+                    handle_message.last_messages[source_id] = {'user': search_query}
                     print(f"이미지 검색 시작: {search_query} ({img_count}장)")
                     
                     try:
@@ -176,13 +212,13 @@ async def callback(request: Request) -> str:
                             if img_urls:
                                 messages = []
                                 # 이미지 URL 저장
-                                if source_id not in handle_message.last_image_urls:
-                                    handle_message.last_image_urls[source_id] = {}
+                                if source_id not in handle_message.last_messages:
+                                    handle_message.last_messages[source_id] = {}
                                 for img_url in img_urls:
                                     if not img_url.startswith('https'):
                                         img_url = img_url.replace('http:', 'https:', 1)
-                                    quote_token = f"img_{len(handle_message.last_image_urls[source_id])}"
-                                    handle_message.last_image_urls[source_id][quote_token] = img_url
+                                    quote_token = f"img_{len(handle_message.last_messages[source_id])}"
+                                    handle_message.last_messages[source_id][quote_token] = img_url
                                     messages.append(ImageSendMessage(
                                         original_content_url=img_url,
                                         preview_image_url=img_url,
@@ -200,13 +236,13 @@ async def callback(request: Request) -> str:
                         if img_urls:
                             messages = []
                             # 이미지 URL 저장
-                            if source_id not in handle_message.last_image_urls:
-                                handle_message.last_image_urls[source_id] = {}
+                            if source_id not in handle_message.last_messages:
+                                handle_message.last_messages[source_id] = {}
                             for img_url in img_urls:
                                 if not img_url.startswith('https'):
                                     img_url = img_url.replace('http:', 'https:', 1)
-                                quote_token = f"img_{len(handle_message.last_image_urls[source_id])}"
-                                handle_message.last_image_urls[source_id][quote_token] = img_url
+                                quote_token = f"img_{len(handle_message.last_messages[source_id])}"
+                                handle_message.last_messages[source_id][quote_token] = img_url
                                 messages.append(ImageSendMessage(
                                     original_content_url=img_url,
                                     preview_image_url=img_url,
@@ -436,3 +472,42 @@ def get_cws_channel() -> dict:
 
     else:
         return {"status": "failed", "message": "no get cws channel response."}
+
+
+def capture_webpage(url: str) -> str:
+    """웹페이지를 캡처합니다."""
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        import tempfile
+        import os
+        from datetime import datetime
+        
+        # Chrome 옵션 설정
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')  # 헤드리스 모드
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        
+        # 웹드라이버 초기화
+        driver = webdriver.Chrome(options=chrome_options)
+        
+        try:
+            # 페이지 로드
+            driver.get(url)
+            driver.implicitly_wait(10)
+            
+            # 스크린샷 저장
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            screenshot_path = f'static/screenshots/screenshot_{timestamp}.png'
+            os.makedirs('static/screenshots', exist_ok=True)
+            driver.save_screenshot(screenshot_path)
+            
+            return screenshot_path
+            
+        finally:
+            driver.quit()
+            
+    except Exception as e:
+        print(f"웹페이지 캡처 오류: {str(e)}")
+        return None
