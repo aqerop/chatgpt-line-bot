@@ -56,37 +56,82 @@ class ImageCrawler:
         """Use icrawler to get images"""
         import tempfile
         import os
+        import requests
+        from urllib.parse import urlparse
         
         # 임시 디렉토리 생성
         with tempfile.TemporaryDirectory() as temp_dir:
-            crawler = GoogleImageCrawler(storage={'root_dir': temp_dir})
-            crawler.crawl(keyword=query, max_num=1)
+            crawler = GoogleImageCrawler(
+                downloader_cls=CustomLinkPrinter,
+                storage={'root_dir': temp_dir},
+                parser_threads=1,
+                downloader_threads=1
+            )
             
-            # 다운로드된 첫 번째 이미지 찾기
-            for filename in os.listdir(temp_dir):
-                if filename.endswith(('.jpg', '.png', '.jpeg')):
-                    return os.path.join(temp_dir, filename)
-        return None
-        
+            # SSL 검증 비활성화 (필요한 경우)
+            crawler.session.verify = False
+            crawler.downloader.file_urls = []
+            
+            try:
+                crawler.crawl(
+                    keyword=query,
+                    max_num=5  # 여러 개 시도
+                )
+                
+                # 유효한 HTTPS URL 찾기
+                for url in crawler.downloader.file_urls:
+                    try:
+                        # URL이 HTTPS가 아니면 변환 시도
+                        if not url.startswith('https'):
+                            url = url.replace('http:', 'https:', 1)
+                        
+                        # URL 유효성 검사
+                        response = requests.head(url, timeout=5, verify=False)
+                        if response.status_code == 200:
+                            return url
+                    except:
+                        continue
+                
+                return None
+                
+            except Exception as e:
+                print(f"iCrawler error: {e}")
+                return None
+
     def _serpapi_search(self, query: str) -> str:
         """Use SerpAPI to get images"""
         if not self.api_key:
             return None
             
-        params = {
-            "engine": "google",
-            "q": query,
-            "tbm": "isch",
-            "num": self.nums,
-            "api_key": self.api_key
-        }
-        
-        results = search(params)
-        
-        if 'images_results' in results and results['images_results']:
-            return results['images_results'][0]['original']
+        try:
+            params = {
+                "engine": "google",
+                "q": query,
+                "tbm": "isch",
+                "num": self.nums,
+                "api_key": self.api_key,
+                "ijn": "0",
+                "gl": "kr",
+                "hl": "ko",
+                "safe": "active"
+            }
             
-        return None
+            results = search(params)
+            
+            if 'images_results' in results and results['images_results']:
+                for img in results['images_results']:
+                    url = img.get('original')
+                    if url:
+                        # HTTPS 변환
+                        if not url.startswith('https'):
+                            url = url.replace('http:', 'https:', 1)
+                        return url
+                            
+            return None
+            
+        except Exception as e:
+            print(f"SerpAPI error: {e}")
+            return None
 
     def _is_img_url(self, url) -> bool:
         """Check the image url is valid or invalid"""
@@ -121,3 +166,91 @@ class ImageCrawler:
         print(f'Get image urls: {img_urls}')
 
         return img_urls[:self.nums]
+
+    def _serpapi_search_multiple(self, query: str) -> list[str]:
+        """Use SerpAPI to get multiple images"""
+        if not self.api_key:
+            return None
+        
+        try:
+            params = {
+                "engine": "google",
+                "q": query,
+                "tbm": "isch",
+                "num": self.nums * 2,  # 여유있게 검색
+                "api_key": self.api_key,
+                "ijn": "0",
+                "gl": "kr",
+                "hl": "ko",
+                "safe": "active"
+            }
+            
+            results = search(params)
+            
+            if 'images_results' in results and results['images_results']:
+                urls = []
+                for img in results['images_results']:
+                    url = img.get('original')
+                    if url:
+                        # HTTPS 변환
+                        if not url.startswith('https'):
+                            url = url.replace('http:', 'https:', 1)
+                        urls.append(url)
+                        if len(urls) >= self.nums:
+                            break
+                return urls if urls else None
+                    
+            return None
+            
+        except Exception as e:
+            print(f"SerpAPI error: {e}")
+            return None
+
+    def _icrawler_search_multiple(self, query: str) -> list[str]:
+        """Use icrawler to get multiple images"""
+        import tempfile
+        import os
+        import requests
+        from urllib.parse import urlparse
+        
+        # 임시 디렉토리 생성
+        with tempfile.TemporaryDirectory() as temp_dir:
+            crawler = GoogleImageCrawler(
+                downloader_cls=CustomLinkPrinter,
+                storage={'root_dir': temp_dir},
+                parser_threads=1,
+                downloader_threads=1
+            )
+            
+            # SSL 검증 비활성화 (필요한 경우)
+            crawler.session.verify = False
+            crawler.downloader.file_urls = []
+            
+            try:
+                crawler.crawl(
+                    keyword=query,
+                    max_num=self.nums * 3  # 여유있게 검색
+                )
+                
+                # 유효한 HTTPS URL 찾기
+                valid_urls = []
+                for url in crawler.downloader.file_urls:
+                    try:
+                        # URL이 HTTPS가 아니면 변환 시도
+                        if not url.startswith('https'):
+                            url = url.replace('http:', 'https:', 1)
+                        
+                        # URL 유효성 검사
+                        response = requests.head(url, timeout=5, verify=False)
+                        if response.status_code == 200:
+                            valid_urls.append(url)
+                            if len(valid_urls) >= self.nums:
+                                break
+                    except:
+                        continue
+                
+                return valid_urls if valid_urls else None
+                
+            except Exception as e:
+                print(f"iCrawler error: {e}")
+                return None
