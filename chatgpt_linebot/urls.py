@@ -33,25 +33,42 @@ handler = WebhookHandler(config.LINE_CHANNEL_SECRET)
 
 @line_app.post("/callback")
 async def callback(request: Request) -> str:
-    """LINE Bot webhook callback
-
-    Args:
-        request (Request): Request Object.
-
-    Raises:
-        HTTPException: Invalid Signature Error
-
-    Returns:
-        str: OK
-    """
-    signature = request.headers["X-Line-Signature"]
-    body = await request.body()
-
-    # handle webhook body
+    """LINE Bot webhook callback"""
     try:
-        handler.handle(body.decode(), signature)
-    except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="Missing Parameter")
+        signature = request.headers["X-Line-Signature"]
+        body = await request.body()
+        body_decode = body.decode('utf-8')
+        
+        print("Request body:", body_decode)  # 디버깅을 위한 출력
+        print("Signature:", signature)  # 시그니처 확인
+        print("Channel Secret:", config.LINE_CHANNEL_SECRET)  # 시크릿 키 확인
+        
+        # handler를 새로 생성
+        handler = WebhookHandler(config.LINE_CHANNEL_SECRET)
+        
+        @handler.add(MessageEvent, message=TextMessage)
+        def handle_message(event):
+            print("Handling message event:", event)  # 이벤트 처리 확인
+            try:
+                reply_token = event.reply_token
+                user_message = event.message.text
+                # 테스트용 에코 응답
+                line_bot_api.reply_message(
+                    reply_token,
+                    TextSendMessage(text=f"따라하기: {user_message}")
+                )
+            except Exception as e:
+                print("Error in handle_message:", str(e))
+                
+        handler.handle(body_decode, signature)
+        
+    except InvalidSignatureError as e:
+        print("Invalid signature error:", str(e))
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        print("Error occurred:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+        
     return "OK"
 
 
